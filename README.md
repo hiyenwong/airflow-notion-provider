@@ -13,9 +13,31 @@ pip install airflow-provider-notion
 1. Get your Notion API token from [Notion Integrations](https://www.notion.so/my-integrations)
 2. Set the connection in Airflow:
    - Connection ID: `notion_default`
-   - Connection Type: `HTTP`
-   - Host: `https://api.notion.com`
-   - Extra: `{"headers": {"Notion-Version": "2022-06-28", "Authorization": "Bearer YOUR_TOKEN"}}`
+   - Connection Type: `Notion` (或 `HTTP`)
+   - Password: `YOUR_NOTION_API_TOKEN` (格式: `secret_xxxxx...`)
+   - Extra (可选): `{"headers": {"Notion-Version": "2022-06-28"}}`
+
+### 配置方式
+
+**方法 1: Airflow UI**
+```
+Admin → Connections → Add Connection
+- Connection Id: notion_default
+- Connection Type: Notion
+- Password: secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+**方法 2: 环境变量**
+```bash
+export AIRFLOW_CONN_NOTION_DEFAULT='{"conn_type": "notion", "password": "secret_YOUR_TOKEN"}'
+```
+
+**方法 3: Airflow CLI**
+```bash
+airflow connections add notion_default \
+    --conn-type notion \
+    --conn-password secret_YOUR_NOTION_TOKEN
+```
 
 ## Operators
 
