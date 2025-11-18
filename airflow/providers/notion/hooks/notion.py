@@ -30,10 +30,10 @@ class NotionHook(BaseHook):
     :type notion_conn_id: str
     """
 
-    conn_name_attr = 'notion_conn_id'
-    default_conn_name = 'notion_default'
-    conn_type = 'notion'
-    hook_name = 'Notion'
+    conn_name_attr = "notion_conn_id"
+    default_conn_name = "notion_default"
+    conn_type = "notion"
+    hook_name = "Notion"
 
     def __init__(self, notion_conn_id: str = default_conn_name) -> None:
         super().__init__()
@@ -51,27 +51,27 @@ class NotionHook(BaseHook):
 
             # Set up headers
             headers = {
-                'Content-Type': 'application/json',
-                'Notion-Version': '2022-06-28'
+                "Content-Type": "application/json",
+                "Notion-Version": "2025-09-03",
             }
 
             # Get token from extra field or password
             if conn.extra:
                 try:
                     extra = json.loads(conn.extra)
-                    if 'headers' in extra:
-                        headers.update(extra['headers'])
+                    if "headers" in extra:
+                        headers.update(extra["headers"])
                 except json.JSONDecodeError:
                     pass
 
             if conn.password:
-                headers['Authorization'] = f'Bearer {conn.password}'
+                headers["Authorization"] = f"Bearer {conn.password}"
 
             self.session.headers.update(headers)
 
             # Set base URL
             if conn.host:
-                self.base_url = conn.host.rstrip('/')
+                self.base_url = conn.host.rstrip("/")
 
         return self.session
 
@@ -86,25 +86,112 @@ class NotionHook(BaseHook):
         except Exception as e:
             return False, str(e)
 
-    def query_database(self, database_id: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get_data_sources(self, database_id: str) -> Dict[str, Any]:
         """
-        Query a Notion database.
+        Get data sources for a database (API 2025-09-03+).
 
-        :param database_id: The ID of the database to query
+        :param database_id: The ID of the database
         :type database_id: str
+        :return: The database object with data_sources list
+        :rtype: dict
+        """
+        url = f"{self.base_url}/databases/{database_id}"
+        response = self.get_conn().get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def query_data_source(
+        self,
+        data_source_id: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sorts: Optional[list] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Query a Notion data source (API 2025-09-03+).
+
+        :param data_source_id: The ID of the data source to query
+        :type data_source_id: str
         :param filter_params: Optional filter parameters
         :type filter_params: dict
+        :param sorts: Optional sort parameters
+        :type sorts: list
+        :param start_cursor: Optional cursor for pagination
+        :type start_cursor: str
+        :param page_size: Number of results per page
+        :type page_size: int
         :return: The query result
         :rtype: dict
         """
-        url = f"{self.base_url}/databases/{database_id}/query"
+        url = f"{self.base_url}/data_sources/{data_source_id}/query"
         data = {}
         if filter_params:
-            data['filter'] = filter_params
+            data["filter"] = filter_params
+        if sorts:
+            data["sorts"] = sorts
+        if start_cursor:
+            data["start_cursor"] = start_cursor
+        if page_size:
+            data["page_size"] = page_size
 
         response = self.get_conn().post(url, json=data)
         response.raise_for_status()
         return response.json()
+
+    def query_database(
+        self,
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sorts: Optional[list] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Query a Notion database or data source.
+
+        For API 2025-09-03+, this method automatically discovers the data_source_id if only
+        database_id is provided (uses the first data source).
+
+        :param database_id: The ID of the database (deprecated, use data_source_id)
+        :type database_id: str
+        :param data_source_id: The ID of the data source to query (recommended)
+        :type data_source_id: str
+        :param filter_params: Optional filter parameters
+        :type filter_params: dict
+        :param sorts: Optional sort parameters
+        :type sorts: list
+        :param start_cursor: Optional cursor for pagination
+        :type start_cursor: str
+        :param page_size: Number of results per page
+        :type page_size: int
+        :return: The query result
+        :rtype: dict
+        """
+        # If data_source_id is provided, use it directly
+        if data_source_id is not None:
+            return self.query_data_source(
+                data_source_id, filter_params, sorts, start_cursor, page_size
+            )
+
+        # If only database_id is provided, discover the first data source
+        if database_id is not None:
+            self.log.info(f"Auto-discovering data_source_id for database {database_id}")
+            db_info = self.get_data_sources(database_id)
+            data_sources = db_info.get("data_sources", [])
+
+            if not data_sources:
+                raise ValueError(f"No data sources found for database {database_id}")
+
+            # Use the first data source
+            discovered_data_source_id = data_sources[0]["id"]
+            self.log.info(f"Using data_source_id: {discovered_data_source_id}")
+            return self.query_data_source(
+                discovered_data_source_id, filter_params, sorts, start_cursor, page_size
+            )
+
+        raise ValueError("Either database_id or data_source_id must be provided")
 
     def get_database(self, database_id: str) -> Dict[str, Any]:
         """
@@ -120,12 +207,23 @@ class NotionHook(BaseHook):
         response.raise_for_status()
         return response.json()
 
-    def create_page(self, database_id: str, properties: Dict[str, Any], children: Optional[list] = None) -> Dict[str, Any]:
+    def create_page(
+        self,
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        children: Optional[list] = None,
+    ) -> Dict[str, Any]:
         """
-        Create a new page in a database.
+        Create a new page in a database or data source.
 
-        :param database_id: The ID of the parent database
+        For API 2025-09-03+, prefer using data_source_id. If only database_id is provided,
+        the method will automatically discover the first data source.
+
+        :param database_id: The ID of the parent database (deprecated, use data_source_id)
         :type database_id: str
+        :param data_source_id: The ID of the parent data source (recommended)
+        :type data_source_id: str
         :param properties: The properties of the new page
         :type properties: dict
         :param children: Optional page content blocks
@@ -134,12 +232,28 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/pages"
-        data = {
-            'parent': {'database_id': database_id},
-            'properties': properties
-        }
+
+        # Determine parent
+        if data_source_id is not None:
+            parent = {"type": "data_source_id", "data_source_id": data_source_id}
+        elif database_id is not None:
+            # Auto-discover data_source_id from database_id
+            self.log.info(f"Auto-discovering data_source_id for database {database_id}")
+            db_info = self.get_data_sources(database_id)
+            data_sources = db_info.get("data_sources", [])
+
+            if not data_sources:
+                raise ValueError(f"No data sources found for database {database_id}")
+
+            discovered_id = data_sources[0]["id"]
+            self.log.info(f"Using data_source_id: {discovered_id}")
+            parent = {"type": "data_source_id", "data_source_id": discovered_id}
+        else:
+            raise ValueError("Either database_id or data_source_id must be provided")
+
+        data = {"parent": parent, "properties": properties or {}}
         if children:
-            data['children'] = children
+            data["children"] = children
 
         response = self.get_conn().post(url, json=data)
         response.raise_for_status()
@@ -157,7 +271,7 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/pages/{page_id}"
-        data = {'properties': properties}
+        data = {"properties": properties}
 
         response = self.get_conn().patch(url, json=data)
         response.raise_for_status()
@@ -177,7 +291,9 @@ class NotionHook(BaseHook):
         response.raise_for_status()
         return response.json()
 
-    def get_block_children(self, block_id: str, start_cursor: Optional[str] = None, page_size: int = 100) -> Dict[str, Any]:
+    def get_block_children(
+        self, block_id: str, start_cursor: Optional[str] = None, page_size: int = 100
+    ) -> Dict[str, Any]:
         """
         Get the children of a block.
 
@@ -191,9 +307,9 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/blocks/{block_id}/children"
-        params = {'page_size': page_size}
+        params: Dict[str, Any] = {"page_size": page_size}
         if start_cursor:
-            params['start_cursor'] = start_cursor
+            params["start_cursor"] = start_cursor
 
         response = self.get_conn().get(url, params=params)
         response.raise_for_status()
@@ -211,7 +327,7 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/blocks/{block_id}/children"
-        data = {'children': children}
+        data = {"children": children}
 
         response = self.get_conn().patch(url, json=data)
         response.raise_for_status()

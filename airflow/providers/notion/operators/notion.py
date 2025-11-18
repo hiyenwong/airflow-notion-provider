@@ -24,95 +24,124 @@ from airflow.utils.context import Context
 
 class NotionQueryDatabaseOperator(BaseOperator):
     """
-    Query a Notion database and return the results.
+    Query a Notion database or data source.
 
-    :param database_id: The ID of the database to query
-    :type database_id: str
-    :param filter_params: Optional filter parameters for the query
-    :type filter_params: dict
+    For API 2025-09-03+, prefer using data_source_id. If only database_id is provided,
+    the operator will automatically discover the first data source.
+
     :param notion_conn_id: The connection ID to use for Notion API
     :type notion_conn_id: str
+    :param database_id: The ID of the database to query (deprecated, use data_source_id)
+    :type database_id: str
+    :param data_source_id: The ID of the data source to query (recommended)
+    :type data_source_id: str
+    :param filter_params: Optional filter parameters
+    :type filter_params: dict
+    :param sorts: Optional sort parameters
+    :type sorts: list
+    :param start_cursor: Optional cursor for pagination
+    :type start_cursor: str
+    :param page_size: Number of results per page
+    :type page_size: int
     """
 
-    template_fields = ["database_id", "filter_params"]
+    template_fields = ["database_id", "data_source_id", "filter_params", "sorts"]
     ui_color = "#3B7FB6"
 
     def __init__(
         self,
-        database_id: str,
-        filter_params: Optional[Dict[str, Any]] = None,
+        *,
         notion_conn_id: str = "notion_default",
-        **kwargs
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        filter_params: Optional[dict] = None,
+        sorts: Optional[list] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.database_id = database_id
-        self.filter_params = filter_params
         self.notion_conn_id = notion_conn_id
+        self.database_id = database_id
+        self.data_source_id = data_source_id
+        self.filter_params = filter_params
+        self.sorts = sorts
+        self.start_cursor = start_cursor
+        self.page_size = page_size
 
-    def execute(self, context: Context) -> Dict[str, Any]:
-        """Execute the operator."""
+    def execute(self, context: dict) -> dict:
         hook = NotionHook(notion_conn_id=self.notion_conn_id)
-
-        self.log.info(f"Querying Notion database: {self.database_id}")
-        if self.filter_params:
-            self.log.info(f"With filter: {self.filter_params}")
-
+        self.log.info(
+            f"Querying Notion {'data source' if self.data_source_id else 'database'}: "
+            f"{self.data_source_id or self.database_id}"
+        )
         result = hook.query_database(
             database_id=self.database_id,
-            filter_params=self.filter_params
+            data_source_id=self.data_source_id,
+            filter_params=self.filter_params,
+            sorts=self.sorts,
+            start_cursor=self.start_cursor,
+            page_size=self.page_size,
         )
-
         self.log.info(f"Query returned {len(result.get('results', []))} results")
         return result
 
 
 class NotionCreatePageOperator(BaseOperator):
     """
-    Create a new page in a Notion database.
+    Create a new page in a Notion database or data source.
 
-    :param database_id: The ID of the parent database
-    :type database_id: str
-    :param properties: The properties of the new page
-    :type properties: dict
-    :param children: Optional content blocks for the page
-    :type children: list
+    For API 2025-09-03+, prefer using data_source_id. If only database_id is provided,
+    the operator will automatically discover the first data source.
+
     :param notion_conn_id: The connection ID to use for Notion API
     :type notion_conn_id: str
+    :param database_id: The ID of the parent database (deprecated, use data_source_id)
+    :type database_id: str
+    :param data_source_id: The ID of the parent data source (recommended)
+    :type data_source_id: str
+    :param properties: The properties of the new page
+    :type properties: dict
+    :param children: Optional page content blocks
+    :type children: list
     """
 
-    template_fields = ["database_id", "properties", "children"]
+    template_fields = ["database_id", "data_source_id", "properties"]
     ui_color = "#3B7FB6"
 
     def __init__(
         self,
-        database_id: str,
-        properties: Dict[str, Any],
-        children: Optional[list] = None,
+        *,
         notion_conn_id: str = "notion_default",
-        **kwargs
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        properties: Optional[dict] = None,
+        children: Optional[list] = None,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.notion_conn_id = notion_conn_id
         self.database_id = database_id
+        self.data_source_id = data_source_id
         self.properties = properties
         self.children = children
-        self.notion_conn_id = notion_conn_id
 
-    def execute(self, context: Context) -> Dict[str, Any]:
-        """Execute the operator."""
+    def execute(self, context: dict) -> dict:
         hook = NotionHook(notion_conn_id=self.notion_conn_id)
-
-        self.log.info(f"Creating page in Notion database: {self.database_id}")
-
+        self.log.info(
+            f"Creating page in Notion {'data source' if self.data_source_id else 'database'}: "
+            f"{self.data_source_id or self.database_id}"
+        )
         result = hook.create_page(
             database_id=self.database_id,
+            data_source_id=self.data_source_id,
             properties=self.properties,
-            children=self.children
+            children=self.children,
         )
-
-        page_id = result.get('id')
-        self.log.info(f"Created Notion page with ID: {page_id}")
-
-        context['task_instance'].xcom_push(key='page_id', value=page_id)
+        page_id = result.get("id")
+        self.log.info(f"Created page with ID: {page_id}")
+        # Push the page_id to XCom for downstream tasks
+        context["task_instance"].xcom_push(key="page_id", value=page_id)
         return result
 
 
@@ -136,7 +165,7 @@ class NotionUpdatePageOperator(BaseOperator):
         page_id: str,
         properties: Dict[str, Any],
         notion_conn_id: str = "notion_default",
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.page_id = page_id
@@ -149,10 +178,7 @@ class NotionUpdatePageOperator(BaseOperator):
 
         self.log.info(f"Updating Notion page: {self.page_id}")
 
-        result = hook.update_page(
-            page_id=self.page_id,
-            properties=self.properties
-        )
+        result = hook.update_page(page_id=self.page_id, properties=self.properties)
 
         self.log.info(f"Successfully updated Notion page: {self.page_id}")
         return result
