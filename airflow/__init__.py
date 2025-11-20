@@ -14,3 +14,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+# This is a namespace package
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)

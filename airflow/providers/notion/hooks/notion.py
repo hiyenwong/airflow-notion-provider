@@ -35,6 +35,35 @@ class NotionHook(BaseHook):
     conn_type = "notion"
     hook_name = "Notion"
 
+    @staticmethod
+    def get_connection_form_widgets() -> Dict[str, Any]:
+        """Return connection form widgets for Notion."""
+        from flask_appbuilder.fieldwidgets import (
+            BS3PasswordFieldWidget,
+            BS3TextFieldWidget,
+        )
+        from wtforms import StringField, PasswordField
+
+        return {
+            "password": PasswordField(
+                "Notion API Token", widget=BS3PasswordFieldWidget()
+            ),
+            "extra": StringField("Extra", widget=BS3TextFieldWidget()),
+        }
+
+    @staticmethod
+    def get_ui_field_behaviour() -> Dict[str, Any]:
+        """Return custom field behaviour for Notion connection."""
+        return {
+            "hidden_fields": ["host", "schema", "login", "port", "extra"],
+            "relabeling": {
+                "password": "Notion API Token",
+            },
+            "placeholders": {
+                "password": "ntn_xxxxx... or secret_xxxxx...",
+            },
+        }
+
     def __init__(self, notion_conn_id: str = default_conn_name) -> None:
         super().__init__()
         self.notion_conn_id = notion_conn_id

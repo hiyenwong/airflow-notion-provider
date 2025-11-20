@@ -136,3 +136,4 @@ dmypy.json
 *~
 dump.rdb
 .github/
+test*.py

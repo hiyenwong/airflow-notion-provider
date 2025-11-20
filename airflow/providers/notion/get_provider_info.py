@@ -15,8 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
+
 def get_provider_info():
-    """Get provider information."""
+    """Get provider information for Airflow 3.x."""
     return {
         "package-name": "airflow-provider-notion",
         "name": "Notion Provider",
@@ -25,17 +26,21 @@ def get_provider_info():
         "connection-types": [
             {
                 "connection-type": "notion",
-                "hook-class": "airflow.providers.notion.hooks.notion.NotionHook"
+                "hook-class-name": "airflow.providers.notion.hooks.notion.NotionHook",
             }
         ],
         "extra-links": [],
         "operators": [
-            "airflow.providers.notion.operators.notion.NotionQueryDatabaseOperator",
-            "airflow.providers.notion.operators.notion.NotionCreatePageOperator",
-            "airflow.providers.notion.operators.notion.NotionUpdatePageOperator"
+            {
+                "integration-name": "Notion",
+                "python-modules": ["airflow.providers.notion.operators.notion"],
+            }
         ],
         "sensors": [],
         "hooks": [
-            "airflow.providers.notion.hooks.notion.NotionHook"
-        ]
+            {
+                "integration-name": "Notion",
+                "python-modules": ["airflow.providers.notion.hooks.notion"],
+            }
+        ],
     }
