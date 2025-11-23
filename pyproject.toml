@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "airflow-provider-notion"
-version = "0.0.2.2"
+version = "0.0.2.3"
 description = "Airflow provider for Notion API integration"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Hi Yen Wong", email = "hiyenwong@gmail.com"}
 ]
+
 keywords = ["airflow", "provider", "notion", "api"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -40,9 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/airflow-provider-notion"
-Repository = "https://github.com/yourusername/airflow-provider-notion"
-Documentation = "https://github.com/yourusername/airflow-provider-notion"
+Homepage = "https://github.com/hiyenwong/airflow-provider-notion"
+Repository = "https://github.com/hiyenwong/airflow-provider-notion"
+Documentation = "https://github.com/hiyenwong/airflow-provider-notion"
 
 [project.entry-points."apache_airflow_provider"]
 notion = "airflow.providers.notion.get_provider_info:get_provider_info"
