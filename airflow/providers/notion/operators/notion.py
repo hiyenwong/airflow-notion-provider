@@ -17,7 +17,7 @@
 
 from typing import Any, Dict, Optional
 
-from airflow.models import BaseOperator
+from airflow.sdk.bases.operator import BaseOperator
 from airflow.providers.notion.hooks.notion import NotionHook
 from airflow.utils.context import Context
 
@@ -62,8 +62,11 @@ class NotionQueryDatabaseOperator(BaseOperator):
     ) -> None:
         super().__init__(**kwargs)
         self.notion_conn_id = notion_conn_id
-        self.database_id = database_id
-        self.data_source_id = data_source_id
+        # Convert empty strings to None to avoid validation errors
+        self.database_id = database_id if database_id and database_id.strip() else None
+        self.data_source_id = (
+            data_source_id if data_source_id and data_source_id.strip() else None
+        )
         self.filter_params = filter_params
         self.sorts = sorts
         self.start_cursor = start_cursor
@@ -121,8 +124,11 @@ class NotionCreatePageOperator(BaseOperator):
     ) -> None:
         super().__init__(**kwargs)
         self.notion_conn_id = notion_conn_id
-        self.database_id = database_id
-        self.data_source_id = data_source_id
+        # Convert empty strings to None to avoid validation errors
+        self.database_id = database_id if database_id and database_id.strip() else None
+        self.data_source_id = (
+            data_source_id if data_source_id and data_source_id.strip() else None
+        )
         self.properties = properties
         self.children = children
 
@@ -168,6 +174,9 @@ class NotionUpdatePageOperator(BaseOperator):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        # Convert empty string to raise error early
+        if not page_id or not page_id.strip():
+            raise ValueError(f"page_id cannot be empty. Received: {page_id!r}")
         self.page_id = page_id
         self.properties = properties
         self.notion_conn_id = notion_conn_id
