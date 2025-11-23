@@ -134,3 +134,6 @@ dmypy.json
 *.swp
 *.swo
 *~
+dump.rdb
+.github/
+test*.py

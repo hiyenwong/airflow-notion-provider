@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "airflow-provider-notion"
-version = "0.0.1"
+version = "0.0.2.2"
 description = "Airflow provider for Notion API integration"
 readme = "README.md"
 license = "Apache-2.0"
@@ -48,7 +48,7 @@ Documentation = "https://github.com/yourusername/airflow-provider-notion"
 notion = "airflow.providers.notion.get_provider_info:get_provider_info"
 
 [tool.hatch.build.targets.wheel]
-packages = ["airflow/providers/notion"]
+packages = ["airflow"]
 
 [tool.black]
 line-length = 110

@@ -43,12 +43,21 @@ airflow/providers/notion/
 ## Connection Configuration
 
 Set up Airflow connection `notion_default` (or custom ID):
-- **Type**: HTTP (or use custom "notion" type if registered)
-- **Host**: `https://api.notion.com` (optional, defaults in code)
-- **Password**: Notion integration token (preferred method)
-- **Extra**: `{"headers": {"Notion-Version": "2022-06-28", "Authorization": "Bearer YOUR_TOKEN"}}`
+- **Type**: `notion` (custom type registered in `get_provider_info()`)
+- **Password**: Notion integration token (format: `secret_xxxxx...`)
+- **Extra** (optional): `{"headers": {"Notion-Version": "2022-06-28"}}`
+
+**Note**: `host` and base API version are hardcoded in `NotionHook`:
+- Base URL: `https://api.notion.com/v1` (can override via `conn.host`)
+- API Version: `2022-06-28` (can override in Extra)
 
 Token from Notion integrations page: https://www.notion.so/my-integrations
+
+**Hook Connection Attributes**:
+- `conn_name_attr = 'notion_conn_id'`
+- `default_conn_name = 'notion_default'`
+- `conn_type = 'notion'`
+- `hook_name = 'Notion'`
 
 ## Development Commands
 

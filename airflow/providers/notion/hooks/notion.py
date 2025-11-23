@@ -19,7 +19,7 @@ import json
 from typing import Any, Dict, Optional
 
 import requests
-from airflow.hooks.base import BaseHook
+from airflow.sdk.bases.hook import BaseHook
 
 
 class NotionHook(BaseHook):
@@ -30,10 +30,39 @@ class NotionHook(BaseHook):
     :type notion_conn_id: str
     """
 
-    conn_name_attr = 'notion_conn_id'
-    default_conn_name = 'notion_default'
-    conn_type = 'notion'
-    hook_name = 'Notion'
+    conn_name_attr = "notion_conn_id"
+    default_conn_name = "notion_default"
+    conn_type = "notion"
+    hook_name = "Notion"
+
+    @classmethod
+    def get_connection_form_widgets(cls) -> Dict[str, Any]:
+        """Return connection form widgets for Notion."""
+        from flask_appbuilder.fieldwidgets import (
+            BS3PasswordFieldWidget,
+            BS3TextFieldWidget,
+        )
+        from wtforms import StringField, PasswordField
+
+        return {
+            "password": PasswordField(
+                "Notion API Token", widget=BS3PasswordFieldWidget()
+            ),
+            "extra": StringField("Extra", widget=BS3TextFieldWidget()),
+        }
+
+    @classmethod
+    def get_ui_field_behaviour(cls) -> Dict[str, Any]:
+        """Return custom field behaviour for Notion connection."""
+        return {
+            "hidden_fields": ["host", "schema", "login", "port", "extra"],
+            "relabeling": {
+                "password": "Notion API Token",
+            },
+            "placeholders": {
+                "password": "ntn_xxxxx... or secret_xxxxx...",
+            },
+        }
 
     def __init__(self, notion_conn_id: str = default_conn_name) -> None:
         super().__init__()
@@ -51,27 +80,38 @@ class NotionHook(BaseHook):
 
             # Set up headers
             headers = {
-                'Content-Type': 'application/json',
-                'Notion-Version': '2022-06-28'
+                "Content-Type": "application/json",
+                "Notion-Version": "2025-09-03",
             }
 
             # Get token from extra field or password
             if conn.extra:
                 try:
                     extra = json.loads(conn.extra)
-                    if 'headers' in extra:
-                        headers.update(extra['headers'])
+                    if "headers" in extra:
+                        headers.update(extra["headers"])
                 except json.JSONDecodeError:
                     pass
 
             if conn.password:
-                headers['Authorization'] = f'Bearer {conn.password}'
+                headers["Authorization"] = f"Bearer {conn.password}"
+                # Log token info (masked for security)
+                token_masked = (
+                    conn.password[:10] + "***" + conn.password[-4:]
+                    if len(conn.password) > 14
+                    else "***"
+                )
+                self.log.info(f"Using Notion API token: {token_masked}")
+            else:
+                self.log.warning("No API token found in connection password field!")
 
             self.session.headers.update(headers)
+            self.log.info(f"Session headers configured: {list(headers.keys())}")
 
             # Set base URL
             if conn.host:
-                self.base_url = conn.host.rstrip('/')
+                self.base_url = conn.host.rstrip("/")
+            self.log.info(f"Base URL: {self.base_url}")
 
         return self.session
 
@@ -86,25 +126,210 @@ class NotionHook(BaseHook):
         except Exception as e:
             return False, str(e)
 
-    def query_database(self, database_id: str, filter_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get_data_sources(self, database_id: str) -> Dict[str, Any]:
         """
-        Query a Notion database.
+        Get data sources for a database (API 2025-09-03+).
 
-        :param database_id: The ID of the database to query
+        :param database_id: The ID of the database
         :type database_id: str
+        :return: The database object with data_sources list
+        :rtype: dict
+        """
+        if not database_id or not database_id.strip():
+            raise ValueError(f"Invalid database_id: '{database_id}' (empty or None)")
+
+        url = f"{self.base_url}/databases/{database_id}"
+        self.log.info(f"Getting data sources for database: {database_id}")
+        self.log.info(f"Request URL: {url}")
+
+        response = None
+        try:
+            response = self.get_conn().get(url)
+            response.raise_for_status()
+            result = response.json()
+            data_sources = result.get("data_sources", [])
+            self.log.info(f"Found {len(data_sources)} data sources")
+            if data_sources:
+                self.log.info(f"Data source IDs: {[ds['id'] for ds in data_sources]}")
+            return result
+        except requests.exceptions.HTTPError as e:
+            self.log.error(f"HTTP Error getting data sources: {e}")
+            if response is not None:
+                self.log.error(f"Status Code: {response.status_code}")
+                self.log.error(f"Response Body: {response.text}")
+            raise
+        except Exception as e:
+            self.log.error(f"Unexpected error getting data sources: {e}")
+            raise
+
+    def query_data_source(
+        self,
+        data_source_id: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sorts: Optional[list] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Query a Notion data source (API 2025-09-03+).
+
+        :param data_source_id: The ID of the data source to query
+        :type data_source_id: str
         :param filter_params: Optional filter parameters
         :type filter_params: dict
+        :param sorts: Optional sort parameters
+        :type sorts: list
+        :param start_cursor: Optional cursor for pagination
+        :type start_cursor: str
+        :param page_size: Number of results per page
+        :type page_size: int
         :return: The query result
         :rtype: dict
         """
-        url = f"{self.base_url}/databases/{database_id}/query"
+        # Validate data_source_id
+        if not data_source_id or not data_source_id.strip():
+            raise ValueError(
+                f"Invalid data_source_id: '{data_source_id}' (empty or None)"
+            )
+
+        url = f"{self.base_url}/data_sources/{data_source_id}/query"
         data = {}
         if filter_params:
-            data['filter'] = filter_params
+            data["filter"] = filter_params
+        if sorts:
+            data["sorts"] = sorts
+        if start_cursor:
+            data["start_cursor"] = start_cursor
+        if page_size:
+            data["page_size"] = page_size
 
-        response = self.get_conn().post(url, json=data)
-        response.raise_for_status()
-        return response.json()
+        # Log request details
+        self.log.info(f"Querying data source: {data_source_id}")
+        self.log.info(f"Request URL: {url}")
+        self.log.info(f"Request body: {json.dumps(data, indent=2)}")
+
+        session = self.get_conn()
+        auth_header = session.headers.get("Authorization", "")
+        if auth_header:
+            # Ensure auth_header is string for masking
+            auth_str = str(auth_header)
+            token_masked = (
+                auth_str[:17] + "***" + auth_str[-4:]
+                if len(auth_str) > 21
+                else "Bearer ***"
+            )
+            self.log.info(f"Authorization header: {token_masked}")
+
+        response = None
+        try:
+            response = session.post(url, json=data)
+            response.raise_for_status()
+            self.log.info(
+                f"Query successful, received {len(response.json().get('results', []))} results"
+            )
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            # Log detailed error information
+            self.log.error(f"HTTP Error occurred: {e}")
+            if response is not None:
+                self.log.error(f"Status Code: {response.status_code}")
+                self.log.error(f"Response Headers: {dict(response.headers)}")
+                self.log.error(f"Response Body: {response.text}")
+            self.log.error(f"Request URL: {url}")
+            self.log.error(f"Request Body: {json.dumps(data)}")
+            raise
+        except Exception as e:
+            self.log.error(f"Unexpected error during query: {e}")
+            self.log.error(f"Request URL: {url}")
+            raise
+
+    def query_database(
+        self,
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sorts: Optional[list] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Query a Notion database or data source.
+
+        For API 2025-09-03+, this method automatically discovers the data_source_id if only
+        database_id is provided (uses the first data source).
+
+        :param database_id: The ID of the database (deprecated, use data_source_id)
+        :type database_id: str
+        :param data_source_id: The ID of the data source to query (recommended)
+        :type data_source_id: str
+        :param filter_params: Optional filter parameters
+        :type filter_params: dict
+        :param sorts: Optional sort parameters
+        :type sorts: list
+        :param start_cursor: Optional cursor for pagination
+        :type start_cursor: str
+        :param page_size: Number of results per page
+        :type page_size: int
+        :return: The query result
+        :rtype: dict
+        """
+        # Log input parameters for debugging
+        self.log.info(
+            f"query_database called with: database_id={database_id!r}, data_source_id={data_source_id!r}"
+        )
+
+        # If data_source_id is provided, validate and use it directly
+        if data_source_id is not None:
+            # Check if it's an empty string
+            if not data_source_id.strip():
+                self.log.error(f"data_source_id is empty string: {data_source_id!r}")
+                raise ValueError(
+                    f"data_source_id cannot be empty. Received: {data_source_id!r}"
+                )
+
+            self.log.info(f"Using provided data_source_id: {data_source_id}")
+            return self.query_data_source(
+                data_source_id, filter_params, sorts, start_cursor, page_size
+            )
+
+        # If only database_id is provided, discover the first data source
+        if database_id is not None:
+            if not database_id.strip():
+                self.log.error(f"database_id is empty string: {database_id!r}")
+                raise ValueError(
+                    f"database_id cannot be empty. Received: {database_id!r}"
+                )
+
+            self.log.info(f"Auto-discovering data_source_id for database {database_id}")
+            try:
+                db_info = self.get_data_sources(database_id)
+                data_sources = db_info.get("data_sources", [])
+
+                if not data_sources:
+                    self.log.error(f"No data sources found for database {database_id}")
+                    self.log.error(f"Database info: {json.dumps(db_info, indent=2)}")
+                    raise ValueError(
+                        f"No data sources found for database {database_id}"
+                    )
+
+                # Use the first data source
+                discovered_data_source_id = data_sources[0]["id"]
+                self.log.info(f"Discovered data_source_id: {discovered_data_source_id}")
+                self.log.info(f"Total data sources available: {len(data_sources)}")
+                return self.query_data_source(
+                    discovered_data_source_id,
+                    filter_params,
+                    sorts,
+                    start_cursor,
+                    page_size,
+                )
+            except Exception as e:
+                self.log.error(f"Failed to discover data_source_id: {e}")
+                raise
+
+        # Neither parameter provided
+        self.log.error("Neither database_id nor data_source_id provided")
+        raise ValueError("Either database_id or data_source_id must be provided")
 
     def get_database(self, database_id: str) -> Dict[str, Any]:
         """
@@ -120,12 +345,23 @@ class NotionHook(BaseHook):
         response.raise_for_status()
         return response.json()
 
-    def create_page(self, database_id: str, properties: Dict[str, Any], children: Optional[list] = None) -> Dict[str, Any]:
+    def create_page(
+        self,
+        database_id: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        children: Optional[list] = None,
+    ) -> Dict[str, Any]:
         """
-        Create a new page in a database.
+        Create a new page in a database or data source.
 
-        :param database_id: The ID of the parent database
+        For API 2025-09-03+, prefer using data_source_id. If only database_id is provided,
+        the method will automatically discover the first data source.
+
+        :param database_id: The ID of the parent database (deprecated, use data_source_id)
         :type database_id: str
+        :param data_source_id: The ID of the parent data source (recommended)
+        :type data_source_id: str
         :param properties: The properties of the new page
         :type properties: dict
         :param children: Optional page content blocks
@@ -133,16 +369,85 @@ class NotionHook(BaseHook):
         :return: The created page
         :rtype: dict
         """
+        # Log input parameters for debugging
+        self.log.info(
+            f"create_page called with: database_id={database_id!r}, data_source_id={data_source_id!r}"
+        )
+
         url = f"{self.base_url}/pages"
-        data = {
-            'parent': {'database_id': database_id},
-            'properties': properties
-        }
+
+        # Determine parent
+        if data_source_id is not None:
+            # Validate data_source_id
+            if not data_source_id.strip():
+                self.log.error(f"data_source_id is empty string: {data_source_id!r}")
+                raise ValueError(
+                    f"data_source_id cannot be empty. Received: {data_source_id!r}"
+                )
+            self.log.info(f"Using provided data_source_id: {data_source_id}")
+            parent = {"type": "data_source_id", "data_source_id": data_source_id}
+        elif database_id is not None:
+            # Validate database_id
+            if not database_id.strip():
+                self.log.error(f"database_id is empty string: {database_id!r}")
+                raise ValueError(
+                    f"database_id cannot be empty. Received: {database_id!r}"
+                )
+            # Auto-discover data_source_id from database_id
+            self.log.info(f"Auto-discovering data_source_id for database {database_id}")
+            db_info = self.get_data_sources(database_id)
+            data_sources = db_info.get("data_sources", [])
+
+            if not data_sources:
+                raise ValueError(f"No data sources found for database {database_id}")
+
+            discovered_id = data_sources[0]["id"]
+            self.log.info(f"Using data_source_id: {discovered_id}")
+            parent = {"type": "data_source_id", "data_source_id": discovered_id}
+        else:
+            raise ValueError("Either database_id or data_source_id must be provided")
+
+        data = {"parent": parent, "properties": properties or {}}
         if children:
-            data['children'] = children
+            data["children"] = children
+
+        # Log the full request for debugging
+        self.log.info(f"Creating page with parent: {json.dumps(parent, indent=2)}")
+        self.log.info(f"Properties: {json.dumps(properties, indent=2)}")
+        if children:
+            self.log.info(f"Children blocks: {len(children)} blocks")
+            self.log.info(
+                f"First block (if any): {json.dumps(children[0] if children else {}, indent=2)}"
+            )
 
         response = self.get_conn().post(url, json=data)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            self.log.error(f"Failed to create page: {e}")
+            self.log.error(f"Request URL: {url}")
+            self.log.error(f"Request Body: {json.dumps(data, indent=2)}")
+            self.log.error(f"Response Status: {response.status_code}")
+            self.log.error(f"Response Headers: {dict(response.headers)}")
+            self.log.error(f"Response Body: {response.text}")
+
+            # Try to parse error message
+            try:
+                error_data = response.json()
+                self.log.error(
+                    f"Notion Error Code: {error_data.get('code', 'unknown')}"
+                )
+                self.log.error(
+                    f"Notion Error Message: {error_data.get('message', 'No message')}"
+                )
+            except json.JSONDecodeError as json_err:
+                self.log.error(f"Failed to parse error response as JSON: {json_err}")
+                self.log.error(
+                    f"Raw response text: {response.text[:500]}"
+                )  # First 500 chars
+            except Exception as parse_err:
+                self.log.error(f"Unexpected error parsing error response: {parse_err}")
+            raise
         return response.json()
 
     def update_page(self, page_id: str, properties: Dict[str, Any]) -> Dict[str, Any]:
@@ -157,10 +462,16 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/pages/{page_id}"
-        data = {'properties': properties}
+        data = {"properties": properties}
 
         response = self.get_conn().patch(url, json=data)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            self.log.error(f"Failed to update page: {e}")
+            self.log.error(f"Response Status: {response.status_code}")
+            self.log.error(f"Response Body: {response.text}")
+            raise
         return response.json()
 
     def get_page(self, page_id: str) -> Dict[str, Any]:
@@ -177,7 +488,9 @@ class NotionHook(BaseHook):
         response.raise_for_status()
         return response.json()
 
-    def get_block_children(self, block_id: str, start_cursor: Optional[str] = None, page_size: int = 100) -> Dict[str, Any]:
+    def get_block_children(
+        self, block_id: str, start_cursor: Optional[str] = None, page_size: int = 100
+    ) -> Dict[str, Any]:
         """
         Get the children of a block.
 
@@ -191,9 +504,9 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/blocks/{block_id}/children"
-        params = {'page_size': page_size}
+        params: Dict[str, Any] = {"page_size": page_size}
         if start_cursor:
-            params['start_cursor'] = start_cursor
+            params["start_cursor"] = start_cursor
 
         response = self.get_conn().get(url, params=params)
         response.raise_for_status()
@@ -211,7 +524,7 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/blocks/{block_id}/children"
-        data = {'children': children}
+        data = {"children": children}
 
         response = self.get_conn().patch(url, json=data)
         response.raise_for_status()

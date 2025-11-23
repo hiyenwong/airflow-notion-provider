@@ -15,8 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from airflow.providers.notion.hooks.notion import NotionHook
-from airflow.providers.notion.operators.notion import NotionQueryDatabaseOperator, NotionCreatePageOperator, NotionUpdatePageOperator
+# This is a namespace package - do not add imports here
+# They can be imported directly from their modules when needed:
+# from airflow.providers.notion.hooks.notion import NotionHook
+# from airflow.providers.notion.operators.notion import NotionQueryDatabaseOperator
 
 __all__ = [
     "NotionHook",
