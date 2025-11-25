@@ -136,4 +136,5 @@ dmypy.json
 *~
 dump.rdb
 .github/
+.github/copilot-instructions.md
 test*.py
