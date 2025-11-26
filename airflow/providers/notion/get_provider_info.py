@@ -22,7 +22,7 @@ def get_provider_info():
         "package-name": "airflow-provider-notion",
         "name": "Notion",
         "description": "Apache Airflow provider for Notion API integration",
-        "versions": ["2.11.0.post5"],
+        "versions": ["2.11.0.post7"],
         "connection-types": [
             {
                 "connection-type": "notion",
