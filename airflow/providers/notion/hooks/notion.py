@@ -41,17 +41,13 @@ class NotionHook(BaseHook):
     @classmethod
     def get_connection_form_widgets(cls) -> Dict[str, Any]:
         """Return connection form widgets for Notion."""
-        from flask_appbuilder.fieldwidgets import (
-            BS3PasswordFieldWidget,
-            BS3TextFieldWidget,
-        )
-        from wtforms import StringField, PasswordField
+        from flask_appbuilder.fieldwidgets import BS3PasswordFieldWidget
+        from wtforms import PasswordField
 
         return {
             "password": PasswordField(
                 "Notion API Token", widget=BS3PasswordFieldWidget()
             ),
-            "extra": StringField("Extra", widget=BS3TextFieldWidget()),
         }
 
     @classmethod

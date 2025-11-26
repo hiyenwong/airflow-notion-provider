@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "airflow-provider-notion"
-version = "2.11.0.post5"
-description = "Airflow provider for Notion API integration"
+version = "2.11.0.post6"
+description = "Apache Airflow provider for Notion API integration"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [
