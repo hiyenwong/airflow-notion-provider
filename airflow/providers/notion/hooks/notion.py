@@ -593,3 +593,96 @@ class NotionHook(BaseHook):
         response = self.get_conn().patch(url, json=data, verify=self.verify_ssl)
         response.raise_for_status()
         return response.json()
+
+    def search(
+        self,
+        query: Optional[str] = None,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sort: Optional[Dict[str, str]] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search pages and databases in Notion workspace.
+
+        This method uses the Notion Search API to find pages and databases that
+        the integration has access to.
+
+        :param query: Search query text. Leave empty to return all accessible pages/databases.
+        :type query: str
+        :param filter_params: Filter results by object type.
+            Example: {"property": "object", "value": "page"} to only return pages
+        :type filter_params: dict
+        :param sort: Sort order configuration.
+            Example: {"direction": "descending", "timestamp": "last_edited_time"}
+        :type sort: dict
+        :param start_cursor: Pagination cursor from previous request
+        :type start_cursor: str
+        :param page_size: Number of results per page (max 100)
+        :type page_size: int
+        :return: Search results containing pages and/or databases
+        :rtype: dict
+
+        Example:
+            # Search all pages
+            results = hook.search(
+                filter_params={"property": "object", "value": "page"},
+                page_size=100
+            )
+
+            # Search pages with keyword
+            results = hook.search(
+                query="project",
+                filter_params={"property": "object", "value": "page"}
+            )
+
+            # Search all (pages + databases)
+            results = hook.search(page_size=100)
+        """
+        url = f"{self.base_url}/search"
+        data: Dict[str, Any] = {}
+
+        if query is not None:
+            data["query"] = query
+        if filter_params:
+            data["filter"] = filter_params
+        if sort:
+            data["sort"] = sort
+        if start_cursor:
+            data["start_cursor"] = start_cursor
+        if page_size:
+            data["page_size"] = page_size
+
+        # Log request details
+        self.log.info("Searching Notion workspace")
+        if query:
+            self.log.info(f"  Query: {query}")
+        if filter_params:
+            filter_type = filter_params.get("value", "all")
+            self.log.info(f"  Filter: {filter_type}")
+        self.log.info(f"Request URL: {url}")
+        self.log.info(f"Request body: {json.dumps(data, indent=2)}")
+
+        response = None
+        try:
+            response = self.get_conn().post(url, json=data, verify=self.verify_ssl)
+            response.raise_for_status()
+            result = response.json()
+
+            results = result.get("results", [])
+            has_more = result.get("has_more", False)
+
+            self.log.info(f"Search successful, received {len(results)} results")
+            self.log.info(f"Has more results: {has_more}")
+
+            return result
+
+        except requests.exceptions.HTTPError as e:
+            self.log.error(f"HTTP Error during search: {e}")
+            if response is not None:
+                self.log.error(f"Status Code: {response.status_code}")
+                self.log.error(f"Response Body: {response.text}")
+            raise
+        except Exception as e:
+            self.log.error(f"Unexpected error during search: {e}")
+            raise

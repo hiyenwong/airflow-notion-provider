@@ -143,7 +143,7 @@ create_page_legacy = NotionCreatePageOperator(
 Update an existing Notion page.
 
 ```python
-from airflow.providers.nion.operators import NotionUpdatePageOperator
+from airflow.providers.notion.operators import NotionUpdatePageOperator
 
 update_page = NotionUpdatePageOperator(
     task_id='update_notion_page',
@@ -159,6 +159,49 @@ update_page = NotionUpdatePageOperator(
 )
 ```
 
+### NotionSearchOperator
+
+Search pages and databases in your Notion workspace.
+
+**Note**: The Search API only returns pages and databases that the integration has permission to access.
+
+```python
+from airflow.providers.notion.operators import NotionSearchOperator
+
+# Search all pages
+search_pages = NotionSearchOperator(
+    task_id='search_all_pages',
+    filter_object_type='page',  # Only return pages
+    sort_direction='descending',  # Most recently edited first
+    page_size=100,
+    dag=dag
+)
+
+# Search with keyword
+search_projects = NotionSearchOperator(
+    task_id='search_projects',
+    query='project',  # Search for pages containing "project"
+    filter_object_type='page',
+    page_size=50,
+    dag=dag
+)
+
+# Search all databases
+search_databases = NotionSearchOperator(
+    task_id='search_databases',
+    filter_object_type='database',  # Only return databases
+    page_size=100,
+    dag=dag
+)
+
+# Search everything (pages + databases)
+search_all = NotionSearchOperator(
+    task_id='search_all',
+    page_size=50,  # No filter = returns both
+    dag=dag
+)
+```
+
 ## Hooks
 
 ### NotionHook
@@ -169,6 +212,14 @@ The base hook for interacting with Notion API (version 2025-09-03).
 from airflow.providers.notion.hooks import NotionHook
 
 hook = NotionHook(notion_conn_id='notion_default')
+
+# Search pages and databases
+results = hook.search(
+    query='project',  # Optional: search keyword
+    filter_params={'property': 'object', 'value': 'page'},  # Optional: filter by type
+    sort={'direction': 'descending', 'timestamp': 'last_edited_time'},
+    page_size=100
+)
 
 # Get data sources for a database
 db_info = hook.get_data_sources('database-id')
