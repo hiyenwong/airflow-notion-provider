@@ -16,10 +16,13 @@
 # under the License.
 
 import json
+import time
 from typing import Any, Dict, Optional
 
 import requests
-from airflow.sdk.bases.hook import BaseHook
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from airflow.hooks.base import BaseHook
 
 
 class NotionHook(BaseHook):
@@ -36,31 +39,16 @@ class NotionHook(BaseHook):
     hook_name = "Notion"
 
     @classmethod
-    def get_connection_form_widgets(cls) -> Dict[str, Any]:
-        """Return connection form widgets for Notion."""
-        from flask_appbuilder.fieldwidgets import (
-            BS3PasswordFieldWidget,
-            BS3TextFieldWidget,
-        )
-        from wtforms import StringField, PasswordField
-
-        return {
-            "password": PasswordField(
-                "Notion API Token", widget=BS3PasswordFieldWidget()
-            ),
-            "extra": StringField("Extra", widget=BS3TextFieldWidget()),
-        }
-
-    @classmethod
     def get_ui_field_behaviour(cls) -> Dict[str, Any]:
         """Return custom field behaviour for Notion connection."""
         return {
-            "hidden_fields": ["host", "schema", "login", "port", "extra"],
+            "hidden_fields": ["host", "schema", "login", "port"],
             "relabeling": {
-                "password": "Notion API Token",
+                "password": "Integration Secret",
             },
             "placeholders": {
-                "password": "ntn_xxxxx... or secret_xxxxx...",
+                "password": "secret_xxxxx... (from Notion integrations)",
+                "extra": '{"verify_ssl": true}',
             },
         }
 
@@ -69,11 +57,40 @@ class NotionHook(BaseHook):
         self.notion_conn_id = notion_conn_id
         self.base_url = "https://api.notion.com/v1"
         self.session: Optional[requests.Session] = None
+        self.verify_ssl = True  # 默认启用 SSL 验证
 
     def get_conn(self) -> requests.Session:
-        """Get the connection to Notion API."""
+        """Get the connection to Notion API with retry and SSL configuration."""
         if self.session is None:
             self.session = requests.Session()
+
+            # Configure retry strategy for network resilience
+            retry_strategy = Retry(
+                total=3,  # Total number of retries
+                backoff_factor=1,  # Wait 1s, 2s, 4s between retries
+                status_forcelist=[429, 500, 502, 503, 504],  # Retry on these HTTP codes
+                allowed_methods=[
+                    "HEAD",
+                    "GET",
+                    "PUT",
+                    "DELETE",
+                    "OPTIONS",
+                    "TRACE",
+                    "POST",
+                ],
+                raise_on_status=False,  # Don't raise on status, let requests handle it
+            )
+
+            # Create HTTP adapter with retry configuration
+            adapter = HTTPAdapter(
+                max_retries=retry_strategy,
+                pool_connections=10,
+                pool_maxsize=10,
+            )
+
+            # Mount adapter for both http and https
+            self.session.mount("https://", adapter)
+            self.session.mount("http://", adapter)
 
             # Get connection details
             conn = self.get_connection(self.notion_conn_id)
@@ -90,6 +107,19 @@ class NotionHook(BaseHook):
                     extra = json.loads(conn.extra)
                     if "headers" in extra:
                         headers.update(extra["headers"])
+                    # 检查是否禁用 SSL 验证
+                    if "verify_ssl" in extra:
+                        self.verify_ssl = extra["verify_ssl"]
+                        if not self.verify_ssl:
+                            self.log.warning(
+                                "⚠️  SSL 证书验证已禁用! 这不安全，仅用于开发/测试环境"
+                            )
+                            # 禁用 urllib3 的 SSL 警告
+                            import urllib3
+
+                            urllib3.disable_warnings(
+                                urllib3.exceptions.InsecureRequestWarning
+                            )
                 except json.JSONDecodeError:
                     pass
 
@@ -107,6 +137,9 @@ class NotionHook(BaseHook):
 
             self.session.headers.update(headers)
             self.log.info(f"Session headers configured: {list(headers.keys())}")
+            self.log.info(
+                "Configured retry strategy: 3 retries with exponential backoff"
+            )
 
             # Set base URL
             if conn.host:
@@ -118,7 +151,9 @@ class NotionHook(BaseHook):
     def test_connection(self):
         """Test the connection to Notion API."""
         try:
-            response = self.get_conn().get(f"{self.base_url}/users")
+            response = self.get_conn().get(
+                f"{self.base_url}/users", verify=self.verify_ssl
+            )
             if response.status_code == 200:
                 return True, "Connection successfully tested"
             else:
@@ -144,7 +179,7 @@ class NotionHook(BaseHook):
 
         response = None
         try:
-            response = self.get_conn().get(url)
+            response = self.get_conn().get(url, verify=self.verify_ssl)
             response.raise_for_status()
             result = response.json()
             data_sources = result.get("data_sources", [])
@@ -221,27 +256,56 @@ class NotionHook(BaseHook):
             self.log.info(f"Authorization header: {token_masked}")
 
         response = None
-        try:
-            response = session.post(url, json=data)
-            response.raise_for_status()
-            self.log.info(
-                f"Query successful, received {len(response.json().get('results', []))} results"
-            )
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            # Log detailed error information
-            self.log.error(f"HTTP Error occurred: {e}")
-            if response is not None:
-                self.log.error(f"Status Code: {response.status_code}")
-                self.log.error(f"Response Headers: {dict(response.headers)}")
-                self.log.error(f"Response Body: {response.text}")
-            self.log.error(f"Request URL: {url}")
-            self.log.error(f"Request Body: {json.dumps(data)}")
-            raise
-        except Exception as e:
-            self.log.error(f"Unexpected error during query: {e}")
-            self.log.error(f"Request URL: {url}")
-            raise
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                response = session.post(
+                    url, json=data, timeout=30, verify=self.verify_ssl
+                )
+                response.raise_for_status()
+                self.log.info(
+                    f"Query successful, received {len(response.json().get('results', []))} results"
+                )
+                return response.json()
+            except requests.exceptions.SSLError as ssl_error:
+                retry_count += 1
+                self.log.warning(
+                    f"SSL Error on attempt {retry_count}/{max_retries}: {ssl_error}"
+                )
+                if retry_count < max_retries:
+                    wait_time = 2**retry_count  # Exponential backoff: 2s, 4s, 8s
+                    self.log.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    self.log.error("Max SSL retries exceeded")
+                    self.log.error(f"SSL Error details: {ssl_error}")
+                    self.log.error("Possible causes:")
+                    self.log.error("1. Network instability or firewall blocking")
+                    self.log.error("2. VPN or proxy interfering with SSL")
+                    self.log.error("3. Outdated SSL/TLS libraries")
+                    self.log.error("Solutions:")
+                    self.log.error("- Check network connection")
+                    self.log.error("- Disable VPN temporarily")
+                    self.log.error(
+                        "- Update Python SSL: pip install --upgrade urllib3 requests"
+                    )
+                    raise
+            except requests.exceptions.HTTPError as e:
+                # Log detailed error information
+                self.log.error(f"HTTP Error occurred: {e}")
+                if response is not None:
+                    self.log.error(f"Status Code: {response.status_code}")
+                    self.log.error(f"Response Headers: {dict(response.headers)}")
+                    self.log.error(f"Response Body: {response.text}")
+                self.log.error(f"Request URL: {url}")
+                self.log.error(f"Request Body: {json.dumps(data)}")
+                raise
+            except Exception as e:
+                self.log.error(f"Unexpected error during query: {e}")
+                self.log.error(f"Request URL: {url}")
+                raise
 
     def query_database(
         self,
@@ -341,7 +405,7 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/databases/{database_id}"
-        response = self.get_conn().get(url)
+        response = self.get_conn().get(url, verify=self.verify_ssl)
         response.raise_for_status()
         return response.json()
 
@@ -420,7 +484,7 @@ class NotionHook(BaseHook):
                 f"First block (if any): {json.dumps(children[0] if children else {}, indent=2)}"
             )
 
-        response = self.get_conn().post(url, json=data)
+        response = self.get_conn().post(url, json=data, verify=self.verify_ssl)
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -464,7 +528,7 @@ class NotionHook(BaseHook):
         url = f"{self.base_url}/pages/{page_id}"
         data = {"properties": properties}
 
-        response = self.get_conn().patch(url, json=data)
+        response = self.get_conn().patch(url, json=data, verify=self.verify_ssl)
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -484,7 +548,7 @@ class NotionHook(BaseHook):
         :rtype: dict
         """
         url = f"{self.base_url}/pages/{page_id}"
-        response = self.get_conn().get(url)
+        response = self.get_conn().get(url, verify=self.verify_ssl)
         response.raise_for_status()
         return response.json()
 
@@ -508,7 +572,7 @@ class NotionHook(BaseHook):
         if start_cursor:
             params["start_cursor"] = start_cursor
 
-        response = self.get_conn().get(url, params=params)
+        response = self.get_conn().get(url, params=params, verify=self.verify_ssl)
         response.raise_for_status()
         return response.json()
 
@@ -526,6 +590,99 @@ class NotionHook(BaseHook):
         url = f"{self.base_url}/blocks/{block_id}/children"
         data = {"children": children}
 
-        response = self.get_conn().patch(url, json=data)
+        response = self.get_conn().patch(url, json=data, verify=self.verify_ssl)
         response.raise_for_status()
         return response.json()
+
+    def search(
+        self,
+        query: Optional[str] = None,
+        filter_params: Optional[Dict[str, Any]] = None,
+        sort: Optional[Dict[str, str]] = None,
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search pages and databases in Notion workspace.
+
+        This method uses the Notion Search API to find pages and databases that
+        the integration has access to.
+
+        :param query: Search query text. Leave empty to return all accessible pages/databases.
+        :type query: str
+        :param filter_params: Filter results by object type.
+            Example: {"property": "object", "value": "page"} to only return pages
+        :type filter_params: dict
+        :param sort: Sort order configuration.
+            Example: {"direction": "descending", "timestamp": "last_edited_time"}
+        :type sort: dict
+        :param start_cursor: Pagination cursor from previous request
+        :type start_cursor: str
+        :param page_size: Number of results per page (max 100)
+        :type page_size: int
+        :return: Search results containing pages and/or databases
+        :rtype: dict
+
+        Example:
+            # Search all pages
+            results = hook.search(
+                filter_params={"property": "object", "value": "page"},
+                page_size=100
+            )
+
+            # Search pages with keyword
+            results = hook.search(
+                query="project",
+                filter_params={"property": "object", "value": "page"}
+            )
+
+            # Search all (pages + databases)
+            results = hook.search(page_size=100)
+        """
+        url = f"{self.base_url}/search"
+        data: Dict[str, Any] = {}
+
+        if query is not None:
+            data["query"] = query
+        if filter_params:
+            data["filter"] = filter_params
+        if sort:
+            data["sort"] = sort
+        if start_cursor:
+            data["start_cursor"] = start_cursor
+        if page_size:
+            data["page_size"] = page_size
+
+        # Log request details
+        self.log.info("Searching Notion workspace")
+        if query:
+            self.log.info(f"  Query: {query}")
+        if filter_params:
+            filter_type = filter_params.get("value", "all")
+            self.log.info(f"  Filter: {filter_type}")
+        self.log.info(f"Request URL: {url}")
+        self.log.info(f"Request body: {json.dumps(data, indent=2)}")
+
+        response = None
+        try:
+            response = self.get_conn().post(url, json=data, verify=self.verify_ssl)
+            response.raise_for_status()
+            result = response.json()
+
+            results = result.get("results", [])
+            has_more = result.get("has_more", False)
+
+            self.log.info(f"Search successful, received {len(results)} results")
+            self.log.info(f"Has more results: {has_more}")
+
+            return result
+
+        except requests.exceptions.HTTPError as e:
+            self.log.error(f"HTTP Error during search: {e}")
+            if response is not None:
+                self.log.error(f"Status Code: {response.status_code}")
+                self.log.error(f"Response Body: {response.text}")
+            raise
+        except Exception as e:
+            self.log.error(f"Unexpected error during search: {e}")
+            raise

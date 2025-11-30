@@ -15,14 +15,5 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# This is a namespace package - do not add imports here
-# They can be imported directly from their modules when needed:
-# from airflow.providers.notion.hooks.notion import NotionHook
-# from airflow.providers.notion.operators.notion import NotionQueryDatabaseOperator
-
-__all__ = [
-    "NotionHook",
-    "NotionQueryDatabaseOperator",
-    "NotionCreatePageOperator",
-    "NotionUpdatePageOperator",
-]
+# This is a namespace package
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)

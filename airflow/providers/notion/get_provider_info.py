@@ -17,12 +17,12 @@
 
 
 def get_provider_info():
-    """Get provider information for Airflow 3.x."""
+    """Get provider information for Airflow."""
     return {
         "package-name": "airflow-provider-notion",
-        "name": "Notion Provider",
-        "description": "Airflow provider for Notion API integration",
-        "versions": ["0.0.1"],
+        "name": "Notion",
+        "description": "Apache Airflow provider for Notion API integration",
+        "versions": ["2.11.0.post7"],
         "connection-types": [
             {
                 "connection-type": "notion",

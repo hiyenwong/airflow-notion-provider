@@ -191,3 +191,132 @@ class NotionUpdatePageOperator(BaseOperator):
 
         self.log.info(f"Successfully updated Notion page: {self.page_id}")
         return result
+
+
+class NotionSearchOperator(BaseOperator):
+    """
+    Search pages and databases in Notion workspace.
+
+    This operator uses the Notion Search API to find pages and databases that
+    the integration has access to. Results can be filtered by object type and
+    sorted by last edited time.
+
+    :param notion_conn_id: The connection ID to use for Notion API
+    :type notion_conn_id: str
+    :param query: Search query text (optional, leave empty to return all)
+    :type query: str
+    :param filter_object_type: Filter by object type: "page", "database", or None for both
+    :type filter_object_type: str
+    :param sort_direction: Sort direction: "ascending" or "descending"
+    :type sort_direction: str
+    :param start_cursor: Pagination cursor for continuing previous search
+    :type start_cursor: str
+    :param page_size: Number of results per page (max 100)
+    :type page_size: int
+
+    Example:
+        # Search all pages
+        search_pages = NotionSearchOperator(
+            task_id="search_pages",
+            filter_object_type="page",
+            page_size=100
+        )
+
+        # Search pages with keyword
+        search_projects = NotionSearchOperator(
+            task_id="search_projects",
+            query="project",
+            filter_object_type="page"
+        )
+
+        # Search everything (pages + databases)
+        search_all = NotionSearchOperator(
+            task_id="search_all",
+            page_size=50
+        )
+    """
+
+    template_fields = ["query", "filter_object_type", "start_cursor"]
+    ui_color = "#3B7FB6"
+
+    def __init__(
+        self,
+        *,
+        notion_conn_id: str = "notion_default",
+        query: Optional[str] = None,
+        filter_object_type: Optional[str] = None,
+        sort_direction: str = "descending",
+        start_cursor: Optional[str] = None,
+        page_size: Optional[int] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.notion_conn_id = notion_conn_id
+        self.query = query
+        self.filter_object_type = filter_object_type
+        self.sort_direction = sort_direction
+        self.start_cursor = start_cursor
+        self.page_size = page_size
+
+        # Validate filter_object_type
+        if self.filter_object_type and self.filter_object_type not in [
+            "page",
+            "database",
+        ]:
+            raise ValueError(
+                f"filter_object_type must be 'page', 'database', or None. Got: {self.filter_object_type}"
+            )
+
+        # Validate sort_direction
+        if self.sort_direction not in ["ascending", "descending"]:
+            raise ValueError(
+                f"sort_direction must be 'ascending' or 'descending'. Got: {self.sort_direction}"
+            )
+
+    def execute(self, context: dict) -> dict:
+        """Execute the search operation."""
+        hook = NotionHook(notion_conn_id=self.notion_conn_id)
+
+        # Build filter params
+        filter_params = None
+        if self.filter_object_type:
+            filter_params = {"property": "object", "value": self.filter_object_type}
+
+        # Build sort params
+        sort = {"direction": self.sort_direction, "timestamp": "last_edited_time"}
+
+        # Log search parameters
+        search_desc = f"Notion workspace"
+        if self.query:
+            search_desc += f" with query '{self.query}'"
+        if self.filter_object_type:
+            search_desc += f" (filter: {self.filter_object_type})"
+
+        self.log.info(f"Searching {search_desc}")
+
+        # Execute search
+        result = hook.search(
+            query=self.query,
+            filter_params=filter_params,
+            sort=sort,
+            start_cursor=self.start_cursor,
+            page_size=self.page_size,
+        )
+
+        # Log results
+        results = result.get("results", [])
+        has_more = result.get("has_more", False)
+        next_cursor = result.get("next_cursor")
+
+        self.log.info(f"Search returned {len(results)} results")
+        self.log.info(f"Has more results: {has_more}")
+
+        if has_more:
+            self.log.info(f"Next cursor: {next_cursor}")
+            # Push next cursor to XCom for pagination
+            context["task_instance"].xcom_push(key="next_cursor", value=next_cursor)
+
+        # Push results count to XCom
+        context["task_instance"].xcom_push(key="results_count", value=len(results))
+
+        return result
