@@ -202,6 +202,72 @@ search_all = NotionSearchOperator(
 )
 ```
 
+### NotionCreateCommentOperator
+
+Create a comment on a Notion page or reply to an existing discussion thread.
+
+**Note**: The integration must have "Insert comments" capability enabled in the [Notion Integrations dashboard](https://www.notion.so/my-integrations).
+
+See: [Working with Comments](https://developers.notion.com/docs/working-with-comments)
+
+```python
+from airflow.providers.notion.operators import NotionCreateCommentOperator
+
+# Add a simple text comment to a page
+add_comment = NotionCreateCommentOperator(
+    task_id='add_comment',
+    page_id='your-page-id',
+    comment_text='Hello from Airflow workflow!',  # Simple text
+    dag=dag
+)
+
+# Add a rich text comment with formatting
+add_rich_comment = NotionCreateCommentOperator(
+    task_id='add_rich_comment',
+    page_id='your-page-id',
+    rich_text=[
+        {'type': 'text', 'text': {'content': 'Task completed by '}},
+        {'type': 'text', 'text': {'content': 'Airflow'}, 'annotations': {'bold': True}},
+        {'type': 'text', 'text': {'content': ' successfully!'}}
+    ],
+    dag=dag
+)
+
+# Reply to an existing discussion thread
+reply_to_discussion = NotionCreateCommentOperator(
+    task_id='reply_to_discussion',
+    discussion_id='your-discussion-id',  # Get from list_comments or Notion UI
+    comment_text='This is a reply to the discussion.',
+    dag=dag
+)
+```
+
+### NotionListCommentsOperator
+
+Retrieve all un-resolved (open) comments on a page or block.
+
+**Note**: The integration must have "Read comments" capability enabled in the [Notion Integrations dashboard](https://www.notion.so/my-integrations).
+
+```python
+from airflow.providers.notion.operators import NotionListCommentsOperator
+
+# Get all comments on a page
+list_comments = NotionListCommentsOperator(
+    task_id='list_comments',
+    block_id='your-page-id',  # Pages are blocks too
+    page_size=100,
+    dag=dag
+)
+
+# Get comments with pagination (using XCom)
+list_more_comments = NotionListCommentsOperator(
+    task_id='list_more_comments',
+    block_id='your-page-id',
+    start_cursor="{{ task_instance.xcom_pull(task_ids='list_comments', key='next_cursor') }}",
+    dag=dag
+)
+```
+
 ## Hooks
 
 ### NotionHook
@@ -255,6 +321,27 @@ page = hook.get_page(page_id='page-id')
 # Block operations
 children = hook.get_block_children(block_id='block-id')
 hook.append_block_children(block_id='block-id', children=[...])
+
+# Comment operations (new!)
+# See: https://developers.notion.com/docs/working-with-comments
+
+# Add a comment to a page
+comment = hook.create_comment(
+    page_id='page-id',
+    rich_text=[{'type': 'text', 'text': {'content': 'Hello from Airflow!'}}]
+)
+
+# Reply to an existing discussion thread
+reply = hook.create_comment(
+    discussion_id='discussion-id',
+    rich_text=[{'type': 'text', 'text': {'content': 'This is a reply.'}}]
+)
+
+# List all comments on a page/block
+comments = hook.list_comments(block_id='page-id', page_size=100)
+for comment in comments.get('results', []):
+    print(f"Comment: {comment['rich_text'][0]['plain_text']}")
+    print(f"Discussion ID: {comment['discussion_id']}")
 ```
 
 ## Migration from Legacy API

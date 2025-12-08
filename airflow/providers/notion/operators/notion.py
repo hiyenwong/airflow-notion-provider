@@ -320,3 +320,241 @@ class NotionSearchOperator(BaseOperator):
         context["task_instance"].xcom_push(key="results_count", value=len(results))
 
         return result
+
+
+class NotionCreateCommentOperator(BaseOperator):
+    """
+    Create a comment on a Notion page or reply to an existing discussion.
+
+    This operator uses the Notion Comments API to add comments. Comments created
+    via the API will appear in the Notion UI's comment sidebar and trigger
+    notifications to users.
+
+    Note: The integration must have "Insert comments" capability enabled in
+    the Notion Integrations dashboard.
+
+    :param rich_text: The comment content in rich text format.
+        Example: [{"type": "text", "text": {"content": "Hello!"}}]
+    :type rich_text: list
+    :param page_id: The ID of the page to add a top-level comment to.
+        Use this to add a new comment to a page (not to reply to existing).
+    :type page_id: str
+    :param discussion_id: The ID of an existing discussion thread to reply to.
+        Use this to reply to an existing inline comment/discussion.
+        Cannot be used together with page_id.
+    :type discussion_id: str
+    :param comment_text: Simple text content for the comment (convenience parameter).
+        If provided, will be converted to rich_text format automatically.
+        Cannot be used together with rich_text.
+    :type comment_text: str
+    :param notion_conn_id: The connection ID to use for Notion API
+    :type notion_conn_id: str
+
+    Example:
+        # Add a simple text comment to a page
+        add_comment = NotionCreateCommentOperator(
+            task_id="add_comment",
+            page_id="your-page-id",
+            comment_text="Hello from Airflow workflow!",
+        )
+
+        # Add a rich text comment
+        add_rich_comment = NotionCreateCommentOperator(
+            task_id="add_rich_comment",
+            page_id="your-page-id",
+            rich_text=[
+                {"type": "text", "text": {"content": "Task completed by "}},
+                {"type": "text", "text": {"content": "Airflow"}, "annotations": {"bold": True}},
+                {"type": "text", "text": {"content": " at {{ ts }}"}}
+            ],
+        )
+
+        # Reply to an existing discussion
+        reply_to_discussion = NotionCreateCommentOperator(
+            task_id="reply",
+            discussion_id="discussion-id-here",
+            comment_text="This is a reply to the discussion.",
+        )
+
+    See: https://developers.notion.com/docs/working-with-comments
+    """
+
+    template_fields = ["page_id", "discussion_id", "rich_text", "comment_text"]
+    ui_color = "#3B7FB6"
+
+    def __init__(
+        self,
+        *,
+        notion_conn_id: str = "notion_default",
+        page_id: Optional[str] = None,
+        discussion_id: Optional[str] = None,
+        rich_text: Optional[list] = None,
+        comment_text: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.notion_conn_id = notion_conn_id
+        self.page_id = page_id if page_id and page_id.strip() else None
+        self.discussion_id = (
+            discussion_id if discussion_id and discussion_id.strip() else None
+        )
+        self.rich_text = rich_text
+        self.comment_text = comment_text
+
+        # Validate: either page_id or discussion_id must be provided
+        if not self.page_id and not self.discussion_id:
+            raise ValueError(
+                "Either page_id or discussion_id must be provided. "
+                "Use page_id for new page comments, discussion_id for replies."
+            )
+
+        if self.page_id and self.discussion_id:
+            raise ValueError(
+                "Cannot provide both page_id and discussion_id. "
+                "Use page_id for new page comments, discussion_id for replies."
+            )
+
+        # Validate: either rich_text or comment_text must be provided
+        if not self.rich_text and not self.comment_text:
+            raise ValueError(
+                "Either rich_text or comment_text must be provided."
+            )
+
+        if self.rich_text and self.comment_text:
+            raise ValueError(
+                "Cannot provide both rich_text and comment_text. Use one or the other."
+            )
+
+    def execute(self, context: dict) -> dict:
+        """Execute the operator to create a comment."""
+        hook = NotionHook(notion_conn_id=self.notion_conn_id)
+
+        # Build rich_text from comment_text if needed
+        rich_text = self.rich_text
+        if self.comment_text:
+            rich_text = [{"type": "text", "text": {"content": self.comment_text}}]
+
+        # Log the action
+        if self.page_id:
+            self.log.info(f"Creating comment on page: {self.page_id}")
+        else:
+            self.log.info(f"Replying to discussion: {self.discussion_id}")
+
+        # Create the comment
+        result = hook.create_comment(
+            rich_text=rich_text,
+            page_id=self.page_id,
+            discussion_id=self.discussion_id,
+        )
+
+        comment_id = result.get("id")
+        discussion_id = result.get("discussion_id")
+
+        self.log.info(f"Comment created successfully with ID: {comment_id}")
+        self.log.info(f"Discussion ID: {discussion_id}")
+
+        # Push to XCom for downstream tasks
+        context["task_instance"].xcom_push(key="comment_id", value=comment_id)
+        context["task_instance"].xcom_push(key="discussion_id", value=discussion_id)
+
+        return result
+
+
+class NotionListCommentsOperator(BaseOperator):
+    """
+    Retrieve comments for a Notion page or block.
+
+    This operator retrieves all un-resolved (open) comments on a page or block.
+    Since pages are technically blocks, you can use a page_id as the block_id.
+
+    Note: The integration must have "Read comments" capability enabled in
+    the Notion Integrations dashboard.
+
+    :param block_id: The ID of the block or page to retrieve comments for.
+        Pages are also blocks, so you can pass a page_id here.
+    :type block_id: str
+    :param start_cursor: Pagination cursor from a previous request.
+    :type start_cursor: str
+    :param page_size: Number of results per page (max 100, default 100).
+    :type page_size: int
+    :param notion_conn_id: The connection ID to use for Notion API
+    :type notion_conn_id: str
+
+    Example:
+        # Get all comments on a page
+        get_comments = NotionListCommentsOperator(
+            task_id="get_comments",
+            block_id="your-page-id",
+        )
+
+        # Get comments with pagination
+        get_more_comments = NotionListCommentsOperator(
+            task_id="get_more_comments",
+            block_id="your-page-id",
+            start_cursor="{{ task_instance.xcom_pull(task_ids='get_comments', key='next_cursor') }}",
+        )
+
+    See: https://developers.notion.com/docs/working-with-comments
+    """
+
+    template_fields = ["block_id", "start_cursor"]
+    ui_color = "#3B7FB6"
+
+    def __init__(
+        self,
+        block_id: str,
+        *,
+        notion_conn_id: str = "notion_default",
+        start_cursor: Optional[str] = None,
+        page_size: int = 100,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+
+        if not block_id or not block_id.strip():
+            raise ValueError(f"block_id cannot be empty. Received: {block_id!r}")
+
+        self.block_id = block_id
+        self.notion_conn_id = notion_conn_id
+        self.start_cursor = start_cursor
+        self.page_size = page_size
+
+    def execute(self, context: dict) -> dict:
+        """Execute the operator to list comments."""
+        hook = NotionHook(notion_conn_id=self.notion_conn_id)
+
+        self.log.info(f"Retrieving comments for block/page: {self.block_id}")
+
+        result = hook.list_comments(
+            block_id=self.block_id,
+            start_cursor=self.start_cursor,
+            page_size=self.page_size,
+        )
+
+        comments = result.get("results", [])
+        has_more = result.get("has_more", False)
+        next_cursor = result.get("next_cursor")
+
+        self.log.info(f"Retrieved {len(comments)} comments")
+
+        # Count unique discussions
+        discussion_ids = set()
+        for comment in comments:
+            disc_id = comment.get("discussion_id")
+            if disc_id:
+                discussion_ids.add(disc_id)
+
+        if discussion_ids:
+            self.log.info(f"Found {len(discussion_ids)} discussion thread(s)")
+
+        # Push to XCom
+        context["task_instance"].xcom_push(key="comments_count", value=len(comments))
+        context["task_instance"].xcom_push(
+            key="discussion_count", value=len(discussion_ids)
+        )
+
+        if has_more:
+            self.log.info(f"Has more comments, next cursor: {next_cursor}")
+            context["task_instance"].xcom_push(key="next_cursor", value=next_cursor)
+
+        return result

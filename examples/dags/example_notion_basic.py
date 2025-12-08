@@ -24,6 +24,8 @@ This example demonstrates basic CRUD operations with Notion:
 - Create a new page
 - Update page properties
 - Get page blocks/content
+- Add comments using Notion Comments API
+- List comments on a page
 
 Prerequisites:
 1. Set up Notion connection in Airflow UI:
@@ -31,7 +33,12 @@ Prerequisites:
    - Connection Type: notion
    - Password: your_notion_api_token (ntn_xxxxx or secret_xxxxx)
 
-2. Set Airflow Variables:
+2. Configure Integration Capabilities in Notion:
+   - Enable "Insert comments" capability for adding comments
+   - Enable "Read comments" capability for listing comments
+   - See: https://developers.notion.com/docs/working-with-comments
+
+3. Set Airflow Variables:
    - notion_database_id: Your Notion database ID
    - notion_data_source_id: Your data source ID (recommended for API 2025-09-03+)
    - notion_test_page_id: An existing page ID for testing get/update operations
@@ -44,6 +51,8 @@ from airflow.providers.notion.operators.notion import (
     NotionQueryDatabaseOperator,
     NotionCreatePageOperator,
     NotionUpdatePageOperator,
+    NotionCreateCommentOperator,
+    NotionListCommentsOperator,
 )
 from airflow.providers.notion.hooks.notion import NotionHook
 
@@ -282,15 +291,32 @@ get_blocks = PythonOperator(
 )
 
 
-# Task 6: Add Comment (via Block)
-# ================================
-# Add a comment-like block to the page
-def add_comment_block(**context):
-    """
-    Add a comment using callout block (visual comment).
+# Task 6: Add Comment using Notion Comments API
+# ==============================================
+# Add a real comment to the page using the official Comments API.
+# This will appear in Notion's comment sidebar and trigger notifications.
+#
+# Note: The integration must have "Insert comments" capability enabled.
+# See: https://developers.notion.com/docs/working-with-comments
+add_comment = NotionCreateCommentOperator(
+    task_id="add_comment",
+    page_id="{{ task_instance.xcom_pull(task_ids='create_page', key='page_id') }}",
+    comment_text="✅ This page was processed successfully by the Airflow workflow on {{ ds }}.",
+    dag=dag,
+)
 
-    Note: Notion API 2025-09-03 doesn't have dedicated comment endpoints.
-    Use callout blocks for comment-like functionality.
+
+# Task 7: Add Rich Text Comment
+# =============================
+# Demonstrate adding a comment with rich text formatting
+def add_rich_comment(**context):
+    """
+    Add a comment with rich text formatting using NotionHook directly.
+
+    This demonstrates how to create comments with:
+    - Bold, italic, strikethrough text
+    - Links
+    - Code snippets
     """
     hook = NotionHook(notion_conn_id="notion_default")
 
@@ -298,11 +324,89 @@ def add_comment_block(**context):
     page_id = context["task_instance"].xcom_pull(task_ids="create_page", key="page_id")
 
     if not page_id:
-        print("No page_id found, skipping comment addition")
+        print("No page_id found, skipping rich comment addition")
         return
 
-    # Add a callout block as a comment
-    comment_blocks = [
+    # Create rich text with formatting
+    rich_text = [
+        {"type": "text", "text": {"content": "📋 "}},
+        {
+            "type": "text",
+            "text": {"content": "Workflow Summary: "},
+            "annotations": {"bold": True},
+        },
+        {"type": "text", "text": {"content": "Task completed "}},
+        {
+            "type": "text",
+            "text": {"content": "successfully"},
+            "annotations": {"italic": True, "color": "green"},
+        },
+        {"type": "text", "text": {"content": ". "}},
+        {
+            "type": "text",
+            "text": {
+                "content": "View documentation",
+                "link": {"url": "https://developers.notion.com/docs/working-with-comments"},
+            },
+        },
+        {"type": "text", "text": {"content": " for more details."}},
+    ]
+
+    result = hook.create_comment(page_id=page_id, rich_text=rich_text)
+    print(f"Added rich comment to page {page_id}")
+    print(f"Comment ID: {result.get('id')}")
+    print(f"Discussion ID: {result.get('discussion_id')}")
+
+    return result
+
+
+add_rich_comment_task = PythonOperator(
+    task_id="add_rich_comment",
+    python_callable=add_rich_comment,
+    dag=dag,
+)
+
+
+# Task 8: List Comments on Page
+# =============================
+# Retrieve all comments on the page we created
+list_comments = NotionListCommentsOperator(
+    task_id="list_comments",
+    block_id="{{ task_instance.xcom_pull(task_ids='create_page', key='page_id') }}",
+    page_size=50,
+    dag=dag,
+)
+
+
+# Task 9: Add Callout Block (Legacy Visual Comment)
+# =================================================
+# For comparison, this shows the old method using callout blocks.
+# Use this when you want visual comments in page content rather than
+# the comment sidebar.
+def add_callout_block(**context):
+    """
+    Add a callout block as a visual comment in page content.
+
+    This is different from Comments API:
+    - Callout blocks appear IN the page content
+    - Comments API adds comments to the sidebar
+    - Callout blocks don't trigger notifications
+    - Callout blocks can have custom colors and icons
+
+    Use callout blocks for visual annotations that should be part
+    of the page content itself.
+    """
+    hook = NotionHook(notion_conn_id="notion_default")
+
+    # Get page_id from previous task
+    page_id = context["task_instance"].xcom_pull(task_ids="create_page", key="page_id")
+
+    if not page_id:
+        print("No page_id found, skipping callout addition")
+        return
+
+    # Add a callout block as a visual comment
+    callout_blocks = [
         {
             "object": "block",
             "type": "callout",
@@ -311,30 +415,31 @@ def add_comment_block(**context):
                     {
                         "type": "text",
                         "text": {
-                            "content": "💬 Comment: This task was processed successfully by the Airflow workflow."
+                            "content": "💡 Note: This callout block appears in page content, "
+                            "not in the comments sidebar."
                         },
                     }
                 ],
-                "icon": {"emoji": "💬"},
-                "color": "blue_background",
+                "icon": {"emoji": "💡"},
+                "color": "yellow_background",
             },
         }
     ]
 
-    result = hook.append_block_children(block_id=page_id, children=comment_blocks)
-    print(f"Added comment block to page {page_id}")
+    result = hook.append_block_children(block_id=page_id, children=callout_blocks)
+    print(f"Added callout block to page {page_id}")
 
     return result
 
 
-add_comment = PythonOperator(
-    task_id="add_comment",
-    python_callable=add_comment_block,
+add_callout = PythonOperator(
+    task_id="add_callout_block",
+    python_callable=add_callout_block,
     dag=dag,
 )
 
 
 # Define task dependencies
 # =========================
-# Linear flow: query → get → create → update → get blocks → add comment
-query_database >> get_page >> create_page >> update_page >> get_blocks >> add_comment
+# Linear flow: query → get → create → update → get blocks → add comment → add rich comment → list comments → add callout
+query_database >> get_page >> create_page >> update_page >> get_blocks >> add_comment >> add_rich_comment_task >> list_comments >> add_callout

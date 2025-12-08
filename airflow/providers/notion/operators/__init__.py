@@ -18,14 +18,18 @@
 """Notion operators for Apache Airflow."""
 
 from airflow.providers.notion.operators.notion import (
+    NotionCreateCommentOperator,
     NotionCreatePageOperator,
+    NotionListCommentsOperator,
     NotionQueryDatabaseOperator,
     NotionSearchOperator,
     NotionUpdatePageOperator,
 )
 
 __all__ = [
+    "NotionCreateCommentOperator",
     "NotionCreatePageOperator",
+    "NotionListCommentsOperator",
     "NotionQueryDatabaseOperator",
     "NotionSearchOperator",
     "NotionUpdatePageOperator",

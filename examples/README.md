@@ -13,11 +13,17 @@ This directory contains comprehensive example DAGs demonstrating how to use the 
 - ✅ Create new pages with properties
 - ✅ Update page properties
 - ✅ Read page blocks (content)
-- ✅ Add comments using callout blocks
+- ✅ **Add comments using Notion Comments API** (new!)
+- ✅ **List comments on a page** (new!)
+- ✅ Add callout blocks for visual annotations
 
 **When to use**: Start here if you're new to the provider
 
 **Schedule**: Manual trigger only
+
+**Note**: To use comment features, enable "Insert comments" and "Read comments" capabilities in your [Notion Integration settings](https://www.notion.so/my-integrations).
+
+See: [Working with Comments](https://developers.notion.com/docs/working-with-comments)
 
 ---
 
@@ -182,7 +188,7 @@ airflow tasks test example_notion_basic query_database 2025-01-01
 ### Example 1: Basic Operations Flow
 
 ```
-Query Database → Get Page → Create Page → Update Page → Get Blocks → Add Comment
+Query Database → Get Page → Create Page → Update Page → Get Blocks → Add Comment → Add Rich Comment → List Comments → Add Callout
 ```
 
 **What it does**:
@@ -191,13 +197,17 @@ Query Database → Get Page → Create Page → Update Page → Get Blocks → A
 3. Creates a new page with title, status, dates, description
 4. Updates the created page's status to "In Progress"
 5. Reads all content blocks from the page
-6. Adds a comment-like callout block
+6. **Adds a comment using Notion Comments API** (appears in comment sidebar)
+7. **Adds a rich text comment with formatting**
+8. **Lists all comments on the page**
+9. Adds a callout block for visual annotation (appears in page content)
 
 **Expected output**:
 - Console logs showing API responses
 - New page created in your Notion database
 - Page updated with new status
-- Comment block added to page
+- Comments added to page (visible in Notion's comment sidebar)
+- Callout block added to page content
 
 ### Example 2: Daily Workflow Flow
 
